@@ -1,0 +1,15 @@
+# Holds SSH_PASSWORD. Never commit it.
+.env
+
+# Default bind-mounted workspace (WORKSPACE_DIR)
+/workspace/*
+!/workspace/.gitkeep
+
+.DS_Store
+.vscode/*
+
+.claude
+
+CLAUDE.md
+
+.idea

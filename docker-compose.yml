@@ -1,0 +1,23 @@
+services:
+  tunnel:
+    build:
+      context: .
+      args:
+        SSH_UID: ${SSH_UID:-1000}
+        NODE_VERSION: ${NODE_VERSION:-22}
+    image: git-tunnel
+    container_name: git-tunnel
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Only sshd is published. The tunnel, SOCKS and proxy ports stay inside
+      # the container.
+      - "${SSH_PORT:-2222}:${SSH_PORT:-2222}"
+    volumes:
+      # sshd host key and the generated git key. Survives rebuilds.
+      - tunnel-state:/state
+      # Where you clone and work on repositories.
+      - ${WORKSPACE_DIR:-./workspace}:/home/sshuser/work
+
+volumes:
+  tunnel-state:

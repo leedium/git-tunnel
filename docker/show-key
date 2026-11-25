@@ -1,0 +1,4 @@
+#!/bin/sh
+# Prints the public half of the container's git key.
+# Usage: docker compose exec tunnel show-key
+exec cat /state/ssh/id_ed25519.pub
