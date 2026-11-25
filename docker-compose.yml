@@ -12,7 +12,9 @@ services:
     ports:
       # Only sshd is published. The tunnel, SOCKS and proxy ports stay inside
       # the container.
-      - "${SSH_PORT:-2222}:${SSH_PORT:-2222}"
+      # SSH_BIND=127.0.0.1 keeps it off the network when the client is this
+      # same machine.
+      - "${SSH_BIND:-0.0.0.0}:${SSH_PORT:-2222}:${SSH_PORT:-2222}"
     volumes:
       # sshd host key and the generated git key. Survives rebuilds.
       - tunnel-state:/state

@@ -50,8 +50,10 @@ COPY docker/sshd_tunnel.conf /usr/local/share/git-tunnel/sshd_tunnel.conf
 COPY docker/http-to-socks.js /usr/local/share/git-tunnel/http-to-socks.js
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/show-key /usr/local/bin/show-key
+COPY docker/tunnel-session /usr/local/bin/tunnel-session
 RUN chmod 644 /etc/ssh/ssh_known_hosts && \
-    chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/show-key
+    chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/show-key \
+        /usr/local/bin/tunnel-session
 
 VOLUME /state
 EXPOSE 2222
