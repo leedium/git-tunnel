@@ -1,0 +1,4 @@
+# The image only needs docker/. Keep .env (the login password), .git and the
+# workspace out of the build context.
+*
+!docker/

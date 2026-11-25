@@ -23,13 +23,23 @@ die() {
 
 # --- 1. Validate configuration ------------------------------------------------
 
-[ -n "${SSH_PASSWORD:-}" ] ||
-  die "SSH_PASSWORD is not set. Copy .env.example to .env and set it."
-[ "${#SSH_PASSWORD}" -ge 8 ] ||
-  die "SSH_PASSWORD must be at least 8 characters."
-case "$SSH_PASSWORD" in
-  *$'\n'*) die "SSH_PASSWORD must not contain a newline." ;;
+# PASSWORD_LOGIN=no accepts only client keys, and needs no SSH_PASSWORD.
+PASSWORD_AUTH=yes
+case "${PASSWORD_LOGIN:-yes}" in
+  yes | YES | true | 1 | on) ;;
+  no | NO | false | 0 | off) PASSWORD_AUTH=no ;;
+  *) die "PASSWORD_LOGIN must be 'yes' or 'no', got '$PASSWORD_LOGIN'." ;;
 esac
+
+if [ "$PASSWORD_AUTH" = yes ]; then
+  [ -n "${SSH_PASSWORD:-}" ] ||
+    die "SSH_PASSWORD is not set. Run ./scripts/setup.sh, or copy .env.example to .env and set it."
+  [ "${#SSH_PASSWORD}" -ge 8 ] ||
+    die "SSH_PASSWORD must be at least 8 characters."
+  case "$SSH_PASSWORD" in
+    *$'\n'*) die "SSH_PASSWORD must not contain a newline." ;;
+  esac
+fi
 
 is_port() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 is_port "$SSH_PORT" || die "SSH_PORT must be a port number, got '$SSH_PORT'."
@@ -55,7 +65,12 @@ HOME_DIR="$(getent passwd "$SSH_USER" | cut -d: -f6)"
 
 # --- 2. Login password (from .env, never from the image) ----------------------
 
-printf '%s:%s\n' "$SSH_USER" "$SSH_PASSWORD" | chpasswd
+if [ "$PASSWORD_AUTH" = yes ]; then
+  printf '%s:%s\n' "$SSH_USER" "$SSH_PASSWORD" | chpasswd
+else
+  # No usable password. "*" (not "!") keeps the account open for key login.
+  usermod -p '*' "$SSH_USER"
+fi
 unset SSH_PASSWORD
 
 # --- 3. sshd host key, persisted so clients never see "host key changed" ------
@@ -115,11 +130,18 @@ chmod 700 "$STATE/ssh"
 chmod 600 "$STATE/ssh/id_ed25519" "$STATE/ssh/config"
 chmod 644 "$STATE/ssh/id_ed25519.pub"
 
+# Client keys installed by connect.sh (through tunnel-session add-key).
+touch "$STATE/ssh/authorized_keys"
+chown "$SSH_USER:$SSH_USER" "$STATE/ssh/authorized_keys"
+chmod 600 "$STATE/ssh/authorized_keys"
+CLIENT_KEYS="$(grep -c '^[a-z]' "$STATE/ssh/authorized_keys" || true)"
+
 # --- 6. sshd config -----------------------------------------------------------
 
 PERMIT_LISTEN="$TUNNEL_PORT"
 [ -z "$PROXY_ENABLED" ] || PERMIT_LISTEN="$TUNNEL_PORT $SOCKS_PORT"
 sed -e "s/__SSH_PORT__/$SSH_PORT/g" -e "s/__PERMIT_LISTEN__/$PERMIT_LISTEN/g" \
+  -e "s/__PASSWORD_AUTH__/$PASSWORD_AUTH/g" \
   "$TEMPLATE" > /etc/ssh/sshd_config.d/00-git-tunnel.conf
 /usr/sbin/sshd -t || die "sshd rejected its configuration (see above)."
 
@@ -138,7 +160,7 @@ BASHRC_LINE="[ -r $PROXY_PROFILE ] && . $PROXY_PROFILE"
 if [ -n "$PROXY_ENABLED" ]; then
   PROXY_URL="http://127.0.0.1:$PROXY_PORT"
 
-  # Login shells (ssh sessions) read profile.d. Interactive non-login shells
+  # Login shells (bash -l) read profile.d. Interactive non-login shells
   # (docker compose exec ... bash) read /etc/bash.bashrc.
   cat > "$PROXY_PROFILE" <<EOF
 # Managed by git-tunnel. Rewritten on every container start.
@@ -190,7 +212,23 @@ fi
 echo
 cat "$STATE/ssh/id_ed25519.pub"
 echo
-echo "Then on the client:  ./scripts/connect.sh <this-host>"
+HOST_FP="$(ssh-keygen -l -f "$STATE/hostkeys/ssh_host_ed25519_key.pub" | awk '{print $2}')"
+echo "Then on the client:"
+echo "  ./scripts/connect.sh <this-host> --fingerprint $HOST_FP"
+echo "The fingerprint identifies this container, so the client knows it is"
+echo "talking to the right machine before any password is typed."
+echo
+if [ "$PASSWORD_AUTH" = yes ]; then
+  echo "Client keys installed: $CLIENT_KEYS. Password login is on. Once your clients have"
+  echo "connected once, set PASSWORD_LOGIN=no in .env to accept keys only."
+else
+  echo "Client keys installed: $CLIENT_KEYS. Password login is off."
+  [ "$CLIENT_KEYS" -gt 0 ] || {
+    echo "WARNING: no client key is installed, so nothing can log in. Add one with:"
+    echo "  docker exec -i -u sshuser git-tunnel tunnel-session add-key < client_key.pub"
+  }
+fi
+echo "To use git on this Docker host too:  ./scripts/host-setup.sh"
 echo "------------------------------------------------------------------------"
 
 exec /usr/sbin/sshd -D -e

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# The only thing an ssh login as sshuser may run (sshd ForceCommand). The login
+# exists to carry the reverse tunnel, so there is no shell: work in the
+# container goes through "docker compose exec".
+#
+#   ping      answers "ok", so the client can test that its key is accepted
+#   add-key   reads one public key on stdin and authorises it for future logins
+#
+# An administrator on the Docker host can add a client key the same way:
+#   docker exec -i -u sshuser git-tunnel tunnel-session add-key < client_key.pub
+set -euo pipefail
+
+AUTH=/state/ssh/authorized_keys
+cmd="${SSH_ORIGINAL_COMMAND:-${1:-}}"
+
+die() {
+  echo "git-tunnel: $*" >&2
+  exit 1
+}
+
+case "$cmd" in
+  ping)
+    echo "git-tunnel: ok"
+    ;;
+  add-key)
+    line=""
+    IFS= read -r line || [ -n "$line" ] || die "no public key received."
+    type="" blob="" comment=""
+    read -r type blob comment <<<"$line" || true
+    [[ "$type" =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)$ ]] ||
+      die "that is not a public key (it must start with the key type, with no options)."
+    [[ "$blob" =~ ^[A-Za-z0-9+/]+=*$ ]] || die "that is not a public key."
+    comment="$(printf '%s' "$comment" | tr -cd 'A-Za-z0-9@._-' | cut -c1-64)"
+
+    # Let ssh-keygen confirm the key really parses.
+    tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' EXIT
+    printf '%s %s\n' "$type" "$blob" > "$tmp"
+    ssh-keygen -l -f "$tmp" >/dev/null 2>&1 || die "that public key is not valid."
+
+    umask 077
+    touch "$AUTH"
+    if grep -qF -- "$type $blob" "$AUTH"; then
+      echo "git-tunnel: this key was already installed."
+    else
+      printf '%s %s %s\n' "$type" "$blob" "${comment:-client}" >> "$AUTH"
+      echo "git-tunnel: key installed. This client no longer needs the password."
+    fi
+    ;;
+  *)
+    die "this login only carries the tunnel and has no shell. Use scripts/connect.sh on the client, and 'docker compose exec -u sshuser tunnel bash' on the Docker host."
+    ;;
+esac
